@@ -23,3 +23,7 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+
+seed.py
+test1.py

@@ -1,22 +1,29 @@
-"""
-TEMPORARY file. In Phase 3 (authentication) it is replaced by real JWT login.
-
-For now the "logged-in user" is always the user with id=1
-(the demo user created by seed.py). This lets us build and test the endpoints
-before login exists. Only THIS function will change later, not the endpoints.
-"""
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, security
 from app.database import get_db
 
+# Tells /docs where to send the username and password when you press "Authorize".
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-def get_current_user(db: Session = Depends(get_db)) -> models.User:
-    user = db.get(models.User, 1)
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> models.User:
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    user_id = security.decode_access_token(token)
+    if user_id is None:
+        raise credentials_error
+
+    # A valid token for a user who no longer exists must not work.
+    user = db.get(models.User, user_id)
     if user is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Temporary auth: run seed.py first to create the demo user.",
-        )
+        raise credentials_error
     return user

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import models, schemas
+from app import models, rag, schemas
 from app.database import get_db
 from app.dependencies import get_current_user
 
@@ -41,6 +41,7 @@ def list_movies(
     status: models.WatchStatus | None = None,
     search: str | None = Query(default=None, min_length=1, max_length=100),
     min_rating: int | None = Query(default=None, ge=1, le=10),
+    max_runtime: int | None = Query(default=None, gt=0, le=1000),
     sort: Literal["created_at", "title", "year", "rating"] = "created_at",
     descending: bool = True,
     limit: int = Query(default=20, ge=1, le=100),
@@ -57,12 +58,19 @@ def list_movies(
         query = query.filter(models.Movie.title.ilike(f"%{search}%"))   # case-insensitive "contains"
     if min_rating is not None:
         query = query.filter(models.Movie.rating >= min_rating)
+    if max_runtime is not None:
+        query = query.filter(models.Movie.runtime_minutes <= max_runtime)
 
     # Count BEFORE limit/offset, so the total is the number of matches across all pages.
     total = query.count()
 
+    if search:
+        safe_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(models.Movie.title.ilike(f"%{safe_search}%", escape="\\"))
+
+
     sort_column = SORT_COLUMNS[sort]
-    ordering = sort_column.desc() if descending else sort_column.asc()
+    ordering = sort_column.desc().nulls_last() if descending else sort_column.asc().nulls_last()
 
     # The id is a tie-breaker: without a fully deterministic order, movies with equal
     # values could appear on two different pages or on none.
@@ -97,6 +105,7 @@ def create_movie(
         db.rollback()
         raise HTTPException(status_code=409, detail="This movie is already in your list.")
     db.refresh(movie)   # reload it to get the id and created_at that the database filled in
+    rag.index_movie_overview(movie.id, current_user.id, movie.overview, movie.genres)
     return movie
 
 
@@ -132,6 +141,8 @@ def update_movie(
         db.rollback()
         raise HTTPException(status_code=409, detail="Another movie in your list already has this tmdb_id.")
     db.refresh(movie)
+    if "overview" in changes or "genres" in changes:
+        rag.index_movie_overview(movie.id, current_user.id, movie.overview, movie.genres)
     return movie
 
 
@@ -144,4 +155,6 @@ def delete_movie(
     movie = get_owned_movie_or_404(db, movie_id, current_user)
     db.delete(movie)    # its reviews are deleted too (cascade in models.py)
     db.commit()
+    rag.remove_movie_reviews(movie_id)
+    rag.remove_movie_overview(movie_id)
     # 204 means "done, nothing to send back", so there is no return value.
