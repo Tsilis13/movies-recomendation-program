@@ -1,18 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas, security
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.limiter import limiter   # shared with every router; main.py plugs it into the app
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# main.py plugs this limiter into the app.
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=schemas.UserResponse, status_code=201)
@@ -30,11 +26,12 @@ def register(request: Request, data: schemas.UserCreate, db: Session = Depends(g
     return user
 
 
-
 @router.post("/login", response_model=schemas.TokenResponse)
 @limiter.limit("5/minute")
 def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.username == form.username).first()
+    # Usernames are stored lowercase (see UserCreate), so compare them lowercase too.
+    username = form.username.strip().lower()
+    user = db.query(models.User).filter(models.User.username == username).first()
 
     hash_to_check = user.password_hash if user else security.DUMMY_HASH
     password_ok = security.verify_password(form.password, hash_to_check)

@@ -55,19 +55,16 @@ def list_movies(
     if status is not None:
         query = query.filter(models.Movie.status == status)
     if search:
-        query = query.filter(models.Movie.title.ilike(f"%{search}%"))   # case-insensitive "contains"
+        # Case-insensitive "contains". % and _ are escaped so they match literally.
+        safe_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(models.Movie.title.ilike(f"%{safe_search}%", escape="\\"))
     if min_rating is not None:
         query = query.filter(models.Movie.rating >= min_rating)
     if max_runtime is not None:
         query = query.filter(models.Movie.runtime_minutes <= max_runtime)
 
-    # Count BEFORE limit/offset, so the total is the number of matches across all pages.
+    # Count AFTER all filters but BEFORE limit/offset: the number of matches across all pages.
     total = query.count()
-
-    if search:
-        safe_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        query = query.filter(models.Movie.title.ilike(f"%{safe_search}%", escape="\\"))
-
 
     sort_column = SORT_COLUMNS[sort]
     ordering = sort_column.desc().nulls_last() if descending else sort_column.asc().nulls_last()
@@ -142,6 +139,7 @@ def update_movie(
         raise HTTPException(status_code=409, detail="Another movie in your list already has this tmdb_id.")
     db.refresh(movie)
     if "overview" in changes or "genres" in changes:
+        # index_movie_overview also removes the old vector when the overview is now empty.
         rag.index_movie_overview(movie.id, current_user.id, movie.overview, movie.genres)
     return movie
 

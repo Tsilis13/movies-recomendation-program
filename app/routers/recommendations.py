@@ -1,14 +1,18 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models, rag, schemas
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.limiter import limiter
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
+
 @router.get("", response_model=list[schemas.MovieResponse])
+@limiter.limit("20/minute")   # every call runs the embedding model, our most expensive operation
 def recommend_movies(
+    request: Request,   # slowapi needs this parameter to read the client
     q: str = Query(..., min_length=1, max_length=200, description="What kind of vibe are you looking for?"),
     limit: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
@@ -21,18 +25,21 @@ def recommend_movies(
 
     movie_ids = [hit["movie_id"] for hit in hits]
 
-    # 2. Fetch the actual movies from SQLite, keeping ONLY the ones still marked as PLANNED
+    # 2. Fetch the actual movies from SQLite, keeping ONLY this user's movies that are still
+    #    PLANNED. The user_id filter is defense in depth: Chroma already filters by user,
+    #    but if that ever breaks, the database still refuses to hand out someone else's movie.
     movies = (
         db.query(models.Movie)
         .filter(models.Movie.id.in_(movie_ids))
+        .filter(models.Movie.user_id == current_user.id)
         .filter(models.Movie.status == models.WatchStatus.PLANNED)
         .all()
     )
 
-    # 3. SQL's IN clause does not preserve the order of movie_ids, so we must sort 
+    # 3. SQL's IN clause does not preserve the order of movie_ids, so we must sort
     # the results back into the exact order of the vector distances (closest meaning first).
     movie_dict = {m.id: m for m in movies}
-    
+
     recommended = []
     for hit in hits:
         if hit["movie_id"] in movie_dict and len(recommended) < limit:

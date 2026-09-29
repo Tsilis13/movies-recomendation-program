@@ -2,9 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from fastapi.responses import FileResponse
 
 from app import models  # noqa: F401  (the import registers the tables with Base)
 from app.database import Base, engine
+from app.limiter import limiter
 from app.routers import auth, movies, reviews, tmdb, recommendations
 
 # Create the tables if they do not exist yet (Alembic will replace this later).
@@ -23,8 +25,8 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# Rate limiting (used on /auth/login).
-app.state.limiter = auth.limiter
+# Rate limiting: login/register, TMDB lookups, review search and recommendations.
+app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(auth.router)
@@ -35,5 +37,5 @@ app.include_router(recommendations.router)
 
 
 @app.get("/")
-def health_check():
-    return {"status": "online"}
+def serve_frontend():
+    return FileResponse("index.html")

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models, rag, schemas
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.limiter import limiter
 from app.routers.movies import get_owned_movie_or_404
 
 # No prefix here: reviews live under TWO different paths.
@@ -71,8 +72,11 @@ def list_movie_reviews(
     )
 
 
+# This route must stay ABOVE "/reviews/{review_id}", or "search" would be read as a review id.
 @router.get("/reviews/search", response_model=list[schemas.ReviewSearchHit])
+@limiter.limit("30/minute")   # every call runs the embedding model
 def search_movie_reviews(
+    request: Request,   # slowapi needs this parameter to read the client
     q: str = Query(..., min_length=1, max_length=200),
     top_k: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
@@ -82,21 +86,30 @@ def search_movie_reviews(
     if not hits:
         return []
 
-    # Fetch titles to map back to the vector hits
+    # Fetch titles to map back to the vector hits. Only THIS user's movies are looked up
+    # (defense in depth: Chroma already filters by user, the database double-checks).
     movie_ids = [hit["movie_id"] for hit in hits]
-    movies = db.query(models.Movie.id, models.Movie.title).filter(models.Movie.id.in_(movie_ids)).all()
+    movies = (
+        db.query(models.Movie.id, models.Movie.title)
+        .filter(models.Movie.id.in_(movie_ids), models.Movie.user_id == current_user.id)
+        .all()
+    )
     title_map = {m.id: m.title for m in movies}
 
+    # A hit whose movie is not in title_map is either stale (the movie was deleted but its
+    # vector survived) or not ours. Either way it must not be returned.
     return [
         {
             "review_id": hit["review_id"],
             "movie_id": hit["movie_id"],
-            "movie_title": title_map.get(hit["movie_id"], "Unknown"),
+            "movie_title": title_map[hit["movie_id"]],
             "distance": hit["distance"],
             "document": hit["document"],
         }
         for hit in hits
+        if hit["movie_id"] in title_map
     ]
+
 
 @router.get("/reviews/{review_id}", response_model=schemas.ReviewResponse)
 def get_review(

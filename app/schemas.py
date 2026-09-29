@@ -1,8 +1,13 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.models import WatchStatus
+
+
+# One genre name: trimmed, 1-50 characters (used by both create and update).
+Genre = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
 
 
 # Movie-related schemas
@@ -24,7 +29,7 @@ class MovieCreate(BaseModel):
     runtime_minutes: int | None = Field(default=None, gt=0, le=1000)
     tmdb_id: int | None = Field(default=None, gt=0)
     rating: int | None = Field(default=None, ge=1, le=10)
-    genres: list[str] = Field(default_factory=list, max_length=15)
+    genres: list[Genre] = Field(default_factory=list, max_length=15)
     status: WatchStatus = WatchStatus.PLANNED
 
     # A rule that involves TWO fields, so it cannot be a simple Field(...) limit.
@@ -38,6 +43,7 @@ class MovieCreate(BaseModel):
 class MovieUpdate(BaseModel):
     """
     For PATCH: EVERY field is optional. The client sends only what it wants to change.
+    Field limits are the same as in MovieCreate.
     The rating/status rule is checked in the endpoint, because it depends on the
     movie that is already stored in the database.
     """
@@ -47,12 +53,12 @@ class MovieUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     year: int | None = Field(default=None, ge=1800, le=2100)
     director: str | None = Field(default=None, max_length=200)
-    overview: str | None = None
-    poster_url: str | None = Field(default=None, max_length=500)
+    overview: str | None = Field(default=None, max_length=5000)
+    poster_url: str | None = Field(default=None, max_length=500, pattern="^https?://")
     runtime_minutes: int | None = Field(default=None, gt=0, le=1000)
     tmdb_id: int | None = Field(default=None, gt=0)
     rating: int | None = Field(default=None, ge=1, le=10)
-    genres: list[str] | None = None
+    genres: list[Genre] | None = Field(default=None, max_length=15)
     status: WatchStatus | None = None
 
     # "Not sent" and "sent as null" look the same in the field values, but they are different:

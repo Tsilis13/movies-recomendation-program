@@ -1,5 +1,5 @@
 """
-Rebuilds the vector index from SQLite.
+Rebuilds the vector indexes (reviews AND movie overviews) from SQLite.
 
     python reindex.py
 
@@ -26,9 +26,21 @@ def main() -> None:
         print(f"Reviews now in index:   {indexed}")
         print(f"Vectors in the store:   {rag.collection.count()}")
         if indexed == in_sqlite == rag.collection.count():
-            print("OK: the index matches the database.")
+            print("OK: the review index matches the database.")
         else:
-            print("WARNING: the numbers above should all be equal.")
+            print("WARNING: the review numbers above should all be equal.")
+
+        movies_indexed = rag.reindex_movie_overviews(db)
+        with_overview = db.query(models.Movie).filter(
+            models.Movie.overview.isnot(None), models.Movie.overview != ""
+        ).count()
+        print(f"Movies with overview:   {with_overview}")
+        print(f"Overviews now indexed:  {movies_indexed}")
+        print(f"Overview vectors:       {rag.overviews_collection.count()}")
+        if movies_indexed == with_overview == rag.overviews_collection.count():
+            print("OK: the overview index matches the database.")
+        else:
+            print("WARNING: the overview numbers above should all be equal.")
     finally:
         db.close()
 
