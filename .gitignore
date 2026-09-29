@@ -1,0 +1,25 @@
+# Virtual environment
+venv/
+.venv/
+
+# Secrets (never commit these). Commit .env.example instead.
+.env
+
+# Local databases and vector store (generated data, rebuilt by the app)
+app.db
+*.sqlite3
+chroma_db/
+
+# Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
